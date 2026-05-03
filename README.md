@@ -29,6 +29,7 @@ Add project-specific or personal rules via JSON config. Both files are loaded an
 
 ```json
 {
+  "disabled": ["cat", "head_tail"],
   "extra_habits": [
     {
       "pattern": "(?<!uv )pip[23]?\\s+install\\b|(?<!uv )python[23]?\\s+-m\\s+pip\\s+install\\b",
@@ -42,7 +43,9 @@ Add project-specific or personal rules via JSON config. Both files are loaded an
 }
 ```
 
-Each entry: `pattern` (Python regex) + `reason` (message shown on block). No validator support — match = block.
+`disabled`: suppress built-in rules by ID. Available IDs: `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`.
+
+`extra_habits`: each entry needs `pattern` (Python regex) and `reason` (message shown on block). No validator support — match = block.
 
 ### `Stop` — clean up temp scripts
 

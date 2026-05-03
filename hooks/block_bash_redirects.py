@@ -12,9 +12,12 @@ Blocks and explains:
 
 Allows /dev/null, /dev/std*, /tmp/*, *.log, fd redirects (>&, >()).
 
-User-defined rules: add `extra_habits` entries to ~/.claude/rubber-band.json
-(global) and/or .claude/rubber-band.json (project-level). Each entry:
-  {"pattern": "<regex>", "reason": "<message shown on block>"}
+Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
+(project-level). Both are merged. Supported keys:
+  "disabled":     list of built-in rule IDs to suppress
+  "extra_habits": list of {pattern, reason} objects to add
+
+Built-in rule IDs: pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -86,7 +89,12 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (".log",)
 REDIRECT_RE = re.compile(r"(?<![>&\d])>{1,2}(?![>&(])\s*([^\s;|&)]+)")
 QUOTED_RE = re.compile(r"\"[^\"]*\"|'[^']*'")
 
-_HabitEntry = tuple["re.Pattern[str]", str, "Callable[[re.Match[str]], bool] | None"]
+
+class HabitEntry(NamedTuple):
+    id: str
+    pattern: re.Pattern[str]
+    reason: str
+    validator: Callable[[re.Match[str]], bool] | None = None
 
 
 def is_allowed_target(target: str) -> bool:
@@ -108,68 +116,71 @@ def _tee_targets_blocked_file(m: re.Match[str]) -> bool:
     return not is_allowed_target(target=m.group(1).rstrip(";|&)"))
 
 
-# Each entry: (pattern, reason, validator | None)
 # validator(match) -> True means "block this match"
-_BAD_HABITS: list[_HabitEntry] = [
-    (
-        re.compile(r"2>&1\s*\|"),
-        "Use `|&` instead of `2>&1 |` — avoids false-positive write-permission prompts from `>`.",  # noqa: E501
-        None,
+_BAD_HABITS: list[HabitEntry] = [
+    HabitEntry(
+        id="pipe_redirect",
+        pattern=re.compile(r"2>&1\s*\|"),
+        reason="Use `|&` instead of `2>&1 |` — avoids false-positive write-permission prompts from `>`.",  # noqa: E501
     ),
-    (
-        re.compile(r"(?:^|[;&]\s*)cat\s+(?!/dev/)(?!\|)\S"),
-        "Use `Read` tool instead of `cat` — file contents stay in context, not shell stdout.",  # noqa: E501
-        None,
+    HabitEntry(
+        id="cat",
+        pattern=re.compile(r"(?:^|[;&]\s*)cat\s+(?!/dev/)(?!\|)\S"),
+        reason="Use `Read` tool instead of `cat` — file contents stay in context, not shell stdout.",  # noqa: E501
     ),
-    (
-        re.compile(r"\b(head|tail)\b([^\n;|&]*)"),
-        "Use `Read` tool instead of `head`/`tail <file>` — pure stdin consumer (`cmd | head`) is allowed.",  # noqa: E501
-        _head_tail_has_file_arg,
+    HabitEntry(
+        id="head_tail",
+        pattern=re.compile(r"\b(head|tail)\b([^\n;|&]*)"),
+        reason="Use `Read` tool instead of `head`/`tail <file>` — pure stdin consumer (`cmd | head`) is allowed.",  # noqa: E501
+        validator=_head_tail_has_file_arg,
     ),
-    (
-        re.compile(r"\bsed\s+(-i\S*|--in-place\b)"),
-        "Use `Edit` tool instead of `sed -i` — preserves file context, avoids silent overwrites.",  # noqa: E501
-        None,
+    HabitEntry(
+        id="sed_i",
+        pattern=re.compile(r"\bsed\s+(-i\S*|--in-place\b)"),
+        reason="Use `Edit` tool instead of `sed -i` — preserves file context, avoids silent overwrites.",  # noqa: E501
     ),
-    (
-        re.compile(r"\bg?awk\s+-i\b"),
-        "Use `Edit` tool instead of `awk -i` — preserves file context, avoids silent overwrites.",  # noqa: E501
-        None,
+    HabitEntry(
+        id="awk_i",
+        pattern=re.compile(r"\bg?awk\s+-i\b"),
+        reason="Use `Edit` tool instead of `awk -i` — preserves file context, avoids silent overwrites.",  # noqa: E501
     ),
-    (
-        re.compile(r"\btee\s+(?:-\S+\s+)*(?!-)([^\s;|&)]+)"),
-        "Use `Write` tool instead of `tee` — file writes stay explicit and reviewable.",
-        _tee_targets_blocked_file,
+    HabitEntry(
+        id="tee",
+        pattern=re.compile(r"\btee\s+(?:-\S+\s+)*(?!-)([^\s;|&)]+)"),
+        reason="Use `Write` tool instead of `tee` — file writes stay explicit and reviewable.",
+        validator=_tee_targets_blocked_file,
     ),
-    (
-        re.compile(r"\bgit\s+add\s+(-A|--all|\.)(?:\s|$)"),
-        "Stage specific files by name — avoids accidentally committing secrets or large binaries.",  # noqa: E501
-        None,
+    HabitEntry(
+        id="git_add_all",
+        pattern=re.compile(r"\bgit\s+add\s+(-A|--all|\.)(?:\s|$)"),
+        reason="Stage specific files by name — avoids accidentally committing secrets or large binaries.",  # noqa: E501
     ),
 ]
 
 
-def _load_extra_habits() -> list[_HabitEntry]:
-    """Load user-defined habits from global then project config, no validator."""
+def _load_config() -> tuple[list[HabitEntry], set[str]]:
+    """Load extra_habits and disabled IDs from global then project config."""
     paths = [
         Path.home() / ".claude" / "rubber-band.json",
         Path(os.environ.get("PWD", ".")) / ".claude" / "rubber-band.json",
     ]
-    habits: list[_HabitEntry] = []
+    extra: list[HabitEntry] = []
+    disabled: set[str] = set()
     for path in paths:
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
+        disabled.update(data.get("disabled", []))
         for entry in data.get("extra_habits", []):
             pattern_str = entry.get("pattern", "")
             reason = entry.get("reason", "")
             if pattern_str and reason:
                 try:
-                    habits.append((re.compile(pattern_str), reason, None))
+                    extra.append(HabitEntry(id="", pattern=re.compile(pattern_str), reason=reason))
                 except re.error:
                     pass
-    return habits
+    return extra, disabled
 
 
 def find_blocked_target(command: str) -> str | None:
@@ -192,13 +203,16 @@ def main() -> int:
     if not command:
         return 0
 
+    extra_habits, disabled = _load_config()
+    habits = [h for h in _BAD_HABITS if h.id not in disabled] + extra_habits
+
     stripped = QUOTED_RE.sub("", command)
     reason: str | None = None
 
-    for pattern, reason_str, validator in _BAD_HABITS + _load_extra_habits():
-        m = pattern.search(stripped)
-        if m and (validator is None or validator(m)):
-            reason = reason_str
+    for habit in habits:
+        m = habit.pattern.search(stripped)
+        if m and (habit.validator is None or habit.validator(m)):
+            reason = habit.reason
             break
 
     if reason is None:
