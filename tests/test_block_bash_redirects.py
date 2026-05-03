@@ -11,7 +11,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
 
 from block_bash_redirects import _BAD_HABITS
-from block_bash_redirects import _RedirectCfg
 from block_bash_redirects import HabitEntry
 from block_bash_redirects import _load_config
 from block_bash_redirects import check_command
@@ -69,7 +68,7 @@ def test_blocked_targets(target: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "command,rule_id",
+    ("command", "rule_id"),
     [
         ("echo foo 2>&1 | cat", "pipe_redirect"),
         ("cat file.py", "cat"),
@@ -151,7 +150,8 @@ def test_allows_fd_redirects(command: str) -> None:
 
 
 def test_disabled_suppresses_rule(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
@@ -165,7 +165,8 @@ def test_disabled_suppresses_rule(
 
 
 def test_disabled_does_not_affect_other_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
@@ -182,7 +183,8 @@ def test_disabled_does_not_affect_other_rules(
 
 
 def test_extra_habits_blocks_custom_pattern(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
@@ -202,7 +204,8 @@ def test_extra_habits_blocks_custom_pattern(
 
 
 def test_extra_habits_invalid_regex_skipped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
@@ -216,7 +219,7 @@ def test_extra_habits_invalid_regex_skipped(
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
-    extra, disabled, _ = _load_config()
+    extra, _, __ = _load_config()
     assert extra == []
 
 
@@ -229,7 +232,8 @@ def test_missing_config_is_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_disabled_redirect_suppresses_redirect_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
@@ -239,14 +243,20 @@ def test_disabled_redirect_suppresses_redirect_check(
 
     extra, disabled, _ = _load_config()
     active = [h for h in _BAD_HABITS if h.id not in disabled] + extra
-    assert check_command(command="echo foo > file.py", habits=active, disabled=disabled) is None
+    result = check_command(
+        command="echo foo > file.py",
+        habits=active,
+        disabled=disabled,
+    )
+    assert result is None
 
 
 # --- global + project config merge ---
 
 
 def test_project_config_extends_global(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
     project = tmp_path / "project"
@@ -277,7 +287,10 @@ def test_project_config_extends_global(
 # --- redirect config overrides ---
 
 
-def test_custom_blocked_extension(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_custom_blocked_extension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
     config.write_text(json.dumps({"blocked_extensions": [".lua"]}))
@@ -285,20 +298,42 @@ def test_custom_blocked_extension(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
     _, _, redirect_cfg = _load_config()
-    assert check_command(command="echo x > script.lua", habits=habits(), redirect_cfg=redirect_cfg) is not None
-    assert check_command(command="echo x > file.py", habits=habits(), redirect_cfg=redirect_cfg) is None
+    assert (
+        check_command(
+            command="echo x > script.lua",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is not None
+    )
+    assert (
+        check_command(
+            command="echo x > file.py",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is None
+    )
 
 
 def test_custom_allowed_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
     scratch = str(tmp_path / "scratch") + "/"
-    config.write_text(json.dumps({"allowed_prefixes": ["/dev/", "/tmp/", "/var/tmp/", "/proc/", scratch]}))
+    prefixes = ["/dev/", "/tmp/", "/var/tmp/", "/proc/", scratch]
+    config.write_text(json.dumps({"allowed_prefixes": prefixes}))
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
     _, _, redirect_cfg = _load_config()
-    assert check_command(command=f"echo x > {scratch}out.py", habits=habits(), redirect_cfg=redirect_cfg) is None
+    assert (
+        check_command(
+            command=f"echo x > {scratch}out.py",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is None
+    )
 
 
 def test_custom_allowed_suffix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,10 +344,20 @@ def test_custom_allowed_suffix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
     _, _, redirect_cfg = _load_config()
-    assert check_command(command="cmd > result.out", habits=habits(), redirect_cfg=redirect_cfg) is None
+    assert (
+        check_command(
+            command="cmd > result.out",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is None
+    )
 
 
-def test_override_removes_default_allowed_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_override_removes_default_allowed_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = tmp_path / ".claude" / "rubber-band.json"
     config.parent.mkdir()
     config.write_text(json.dumps({"allowed_prefixes": ["/dev/"]}))
@@ -320,4 +365,11 @@ def test_override_removes_default_allowed_prefix(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
     _, _, redirect_cfg = _load_config()
-    assert check_command(command="echo x > /tmp/out.py", habits=habits(), redirect_cfg=redirect_cfg) is not None
+    assert (
+        check_command(
+            command="echo x > /tmp/out.py",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is not None
+    )

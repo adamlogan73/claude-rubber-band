@@ -1,6 +1,6 @@
 [project]
 name = "claude-rubber-band"
-version = "0.1.0"
+version = "1.0.0"
 description = "Hooks that enforce tool-first shell habits and clean up temp files."
 requires-python = ">=3.10"
 
@@ -8,6 +8,7 @@ requires-python = ">=3.10"
 dev = [
     "pytest>=8",
     "ruff>=0.9",
+    "ty>=0.0.34",
 ]
 
 [tool.pytest.ini_options]
@@ -28,6 +29,7 @@ ignore = [
     'G004',
     'T201',   # print is intentional hook output
     'S108',   # /tmp/ paths are intentional allowlist entries
+    'ISC001', # conflicts with COM812 (trailing commas)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -42,3 +44,6 @@ ignore = [
 
 [tool.ruff.lint.isort]
 force-single-line = true
+
+[tool.ty.environment]
+extra-paths = ["hooks"]

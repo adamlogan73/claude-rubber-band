@@ -20,11 +20,13 @@ Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
   "allowed_prefixes":    list of path prefixes to allow (replaces default)
   "allowed_suffixes":    list of file suffixes to allow (replaces default)
 
-Built-in rule IDs: pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect
+Built-in rule IDs:
+  pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -107,7 +109,10 @@ class _RedirectCfg(NamedTuple):
     allowed_suffixes: tuple[str, ...] = ALLOWED_SUFFIXES
 
 
-def is_allowed_target(target: str, cfg: _RedirectCfg = _RedirectCfg()) -> bool:
+_DEFAULT_REDIRECT_CFG: _RedirectCfg = _RedirectCfg()
+
+
+def is_allowed_target(target: str, cfg: _RedirectCfg = _DEFAULT_REDIRECT_CFG) -> bool:
     if not target or target.startswith("&"):
         return True
     if target.startswith(cfg.allowed_prefixes):
@@ -158,7 +163,7 @@ _BAD_HABITS: list[HabitEntry] = [
     HabitEntry(
         id="tee",
         pattern=re.compile(r"\btee\s+(?:-\S+\s+)*(?!-)([^\s;|&)]+)"),
-        reason="Use `Write` tool instead of `tee` — file writes stay explicit and reviewable.",
+        reason="Use `Write` tool instead of `tee` — file writes stay explicit and reviewable.",  # noqa: E501
         validator=_tee_targets_blocked_file,
     ),
     HabitEntry(
@@ -191,10 +196,9 @@ def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
             pattern_str = entry.get("pattern", "")
             reason = entry.get("reason", "")
             if pattern_str and reason:
-                try:
-                    extra.append(HabitEntry(id="", pattern=re.compile(pattern_str), reason=reason))
-                except re.error:
-                    pass
+                with contextlib.suppress(re.error):
+                    compiled = re.compile(pattern_str)
+                    extra.append(HabitEntry(id="", pattern=compiled, reason=reason))
         if "blocked_extensions" in data:
             blocked_extensions = frozenset(data["blocked_extensions"])
         if "allowed_prefixes" in data:
@@ -202,10 +206,14 @@ def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
         if "allowed_suffixes" in data:
             allowed_suffixes = tuple(data["allowed_suffixes"])
 
-    return extra, disabled, _RedirectCfg(
-        blocked_extensions=blocked_extensions,
-        allowed_prefixes=allowed_prefixes,
-        allowed_suffixes=allowed_suffixes,
+    return (
+        extra,
+        disabled,
+        _RedirectCfg(
+            blocked_extensions=blocked_extensions,
+            allowed_prefixes=allowed_prefixes,
+            allowed_suffixes=allowed_suffixes,
+        ),
     )
 
 
@@ -223,7 +231,7 @@ def check_command(
     command: str,
     habits: list[HabitEntry],
     disabled: set[str] | None = None,
-    redirect_cfg: _RedirectCfg = _RedirectCfg(),
+    redirect_cfg: _RedirectCfg = _DEFAULT_REDIRECT_CFG,
 ) -> str | None:
     """Return block reason for command, or None if allowed."""
     stripped = QUOTED_RE.sub("", command)
