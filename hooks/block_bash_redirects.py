@@ -14,8 +14,11 @@ Allows /dev/null, /dev/std*, /tmp/*, *.log, fd redirects (>&, >()).
 
 Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
 (project-level). Both are merged. Supported keys:
-  "disabled":     list of built-in rule IDs to suppress
-  "extra_habits": list of {pattern, reason} objects to add
+  "disabled":            list of built-in rule IDs to suppress
+  "extra_habits":        list of {pattern, reason} objects to add
+  "blocked_extensions":  list of extensions to block (replaces default)
+  "allowed_prefixes":    list of path prefixes to allow (replaces default)
+  "allowed_suffixes":    list of file suffixes to allow (replaces default)
 
 Built-in rule IDs: pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect
 """
@@ -98,14 +101,20 @@ class HabitEntry(NamedTuple):
     validator: Callable[[re.Match[str]], bool] | None = None
 
 
-def is_allowed_target(target: str) -> bool:
+class _RedirectCfg(NamedTuple):
+    blocked_extensions: frozenset[str] = BLOCKED_EXTENSIONS
+    allowed_prefixes: tuple[str, ...] = ALLOWED_PREFIXES
+    allowed_suffixes: tuple[str, ...] = ALLOWED_SUFFIXES
+
+
+def is_allowed_target(target: str, cfg: _RedirectCfg = _RedirectCfg()) -> bool:
     if not target or target.startswith("&"):
         return True
-    if target.startswith(ALLOWED_PREFIXES):
+    if target.startswith(cfg.allowed_prefixes):
         return True
-    if any(target.endswith(suffix) for suffix in ALLOWED_SUFFIXES):
+    if any(target.endswith(suffix) for suffix in cfg.allowed_suffixes):
         return True
-    return Path(target).suffix.lower() not in BLOCKED_EXTENSIONS
+    return Path(target).suffix.lower() not in cfg.blocked_extensions
 
 
 def _head_tail_has_file_arg(m: re.Match[str]) -> bool:
@@ -113,6 +122,7 @@ def _head_tail_has_file_arg(m: re.Match[str]) -> bool:
     return any(not t.startswith("-") and not t.lstrip("+").isdigit() for t in tokens)
 
 
+# Uses module-default _RedirectCfg — config overrides do not affect the tee validator.
 def _tee_targets_blocked_file(m: re.Match[str]) -> bool:
     return not is_allowed_target(target=m.group(1).rstrip(";|&)"))
 
@@ -159,14 +169,18 @@ _BAD_HABITS: list[HabitEntry] = [
 ]
 
 
-def _load_config() -> tuple[list[HabitEntry], set[str]]:
-    """Load extra_habits and disabled IDs from global then project config."""
+def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
+    """Load config from global then project file, merging both."""
     paths = [
         Path.home() / ".claude" / "rubber-band.json",
         Path(os.environ.get("PWD", ".")) / ".claude" / "rubber-band.json",
     ]
     extra: list[HabitEntry] = []
     disabled: set[str] = set()
+    blocked_extensions: frozenset[str] = BLOCKED_EXTENSIONS
+    allowed_prefixes: tuple[str, ...] = ALLOWED_PREFIXES
+    allowed_suffixes: tuple[str, ...] = ALLOWED_SUFFIXES
+
     for path in paths:
         try:
             data = json.loads(path.read_text())
@@ -178,22 +192,29 @@ def _load_config() -> tuple[list[HabitEntry], set[str]]:
             reason = entry.get("reason", "")
             if pattern_str and reason:
                 try:
-                    extra.append(
-                        HabitEntry(
-                            id="", pattern=re.compile(pattern_str), reason=reason,
-                        ),
-                    )
+                    extra.append(HabitEntry(id="", pattern=re.compile(pattern_str), reason=reason))
                 except re.error:
                     pass
-    return extra, disabled
+        if "blocked_extensions" in data:
+            blocked_extensions = frozenset(data["blocked_extensions"])
+        if "allowed_prefixes" in data:
+            allowed_prefixes = tuple(data["allowed_prefixes"])
+        if "allowed_suffixes" in data:
+            allowed_suffixes = tuple(data["allowed_suffixes"])
+
+    return extra, disabled, _RedirectCfg(
+        blocked_extensions=blocked_extensions,
+        allowed_prefixes=allowed_prefixes,
+        allowed_suffixes=allowed_suffixes,
+    )
 
 
-def _find_blocked_redirect(command: str) -> str | None:
+def _find_blocked_redirect(command: str, cfg: _RedirectCfg) -> str | None:
     """Return first redirect target that should be blocked, or None."""
     stripped = QUOTED_RE.sub("", command)
     for match in REDIRECT_RE.finditer(stripped):
         target = match.group(1).rstrip(";|&)")
-        if not is_allowed_target(target=target):
+        if not is_allowed_target(target=target, cfg=cfg):
             return target
     return None
 
@@ -202,6 +223,7 @@ def check_command(
     command: str,
     habits: list[HabitEntry],
     disabled: set[str] | None = None,
+    redirect_cfg: _RedirectCfg = _RedirectCfg(),
 ) -> str | None:
     """Return block reason for command, or None if allowed."""
     stripped = QUOTED_RE.sub("", command)
@@ -211,7 +233,7 @@ def check_command(
             return habit.reason
 
     if "redirect" not in (disabled or set()):
-        blocked = _find_blocked_redirect(command=command)
+        blocked = _find_blocked_redirect(command=command, cfg=redirect_cfg)
         if blocked is not None:
             return (
                 f"Redirect to '{blocked}' blocked. "
@@ -231,9 +253,14 @@ def main() -> int:
     if not command:
         return 0
 
-    extra_habits, disabled = _load_config()
+    extra_habits, disabled, redirect_cfg = _load_config()
     habits = [h for h in _BAD_HABITS if h.id not in disabled] + extra_habits
-    reason = check_command(command=command, habits=habits, disabled=disabled)
+    reason = check_command(
+        command=command,
+        habits=habits,
+        disabled=disabled,
+        redirect_cfg=redirect_cfg,
+    )
 
     if reason is None:
         return 0
