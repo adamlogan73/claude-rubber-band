@@ -8,15 +8,16 @@ Claude Code plugin — two hooks that keep Claude's shell habits tidy.
 
 Runs before every `Bash` tool call. Blocks patterns where a dedicated tool is better, and explains why.
 
-| Pattern blocked | Better alternative |
-|---|---|
-| `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
-| `cat <file>` | `Read` tool |
-| `head`/`tail <file>` | `Read` tool |
-| `sed -i` / `awk -i` | `Edit` tool |
-| `tee <file>` | `Write` tool |
-| `2>&1 \|` | `\|&` |
-| `git add -A` / `git add .` | Stage specific files by name |
+| ID | Pattern blocked | Better alternative |
+|---|---|---|
+| `pipe_redirect` | `2>&1 \|` | `\|&` |
+| `cat` | `cat <file>` | `Read` tool |
+| `head_tail` | `head`/`tail <file>` | `Read` tool |
+| `sed_i` | `sed -i` | `Edit` tool |
+| `awk_i` | `awk -i` | `Edit` tool |
+| `tee` | `tee <file>` | `Write` tool |
+| `git_add_all` | `git add -A` / `git add .` | Stage specific files by name |
+| — | `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
 
 Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects.
 
@@ -43,7 +44,7 @@ Add project-specific or personal rules via JSON config. Both files are loaded an
 }
 ```
 
-`disabled`: suppress built-in rules by ID. Available IDs: `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`.
+`disabled`: suppress built-in rules by ID (see table above).
 
 `extra_habits`: each entry needs `pattern` (Python regex) and `reason` (message shown on block). No validator support — match = block.
 
