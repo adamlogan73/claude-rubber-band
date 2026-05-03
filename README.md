@@ -17,9 +17,11 @@ Runs before every `Bash` tool call. Blocks patterns where a dedicated tool is be
 | `awk_i` | `awk -i` | `Edit` tool |
 | `tee` | `tee <file>` | `Write` tool |
 | `git_add_all` | `git add -A` / `git add .` | Stage specific files by name |
+| `grep` | `grep <file>` / `grep -r` | `Grep` tool |
+| `trailing_cat` | `cmd \| cat` / `cmd \|& cat` | Remove — Bash tool captures all output |
 | `redirect` | `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
 
-Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects.
+Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects, `cmd | grep` (stdin filter).
 
 #### Custom rules
 

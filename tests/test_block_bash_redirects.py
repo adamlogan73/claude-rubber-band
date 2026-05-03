@@ -84,6 +84,12 @@ def test_blocked_targets(target: str) -> None:
         ("git add -A", "git_add_all"),
         ("git add .", "git_add_all"),
         ("git add --all", "git_add_all"),
+        ("grep pattern file.py", "grep"),
+        ("grep -r pattern src/", "grep"),
+        ("uv run pytest |& cat", "trailing_cat"),
+        ("uv run pytest | cat", "trailing_cat"),
+        ("uv run pytest | cat;", "trailing_cat"),
+        ("cmd | cat", "trailing_cat"),
     ],
 )
 def test_blocks_bad_habits(command: str, rule_id: str) -> None:
@@ -115,7 +121,6 @@ def test_blocks_redirects_to_source_files(command: str) -> None:
     "command",
     [
         "cat /dev/stdin",
-        "cmd | cat",  # cat with no file arg (piped)
         "cmd | head",  # head as pure stdin consumer
         "cmd | tail",
         "echo foo > /dev/null",
@@ -125,6 +130,8 @@ def test_blocks_redirects_to_source_files(command: str) -> None:
         "git add src/module.py tests/test_foo.py",
         "tee /tmp/debug",
         "tee output.log",
+        "cmd | grep pattern",
+        "uv run pytest |& head -20",
     ],
 )
 def test_allows_good_commands(command: str) -> None:

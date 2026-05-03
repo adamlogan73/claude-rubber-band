@@ -21,7 +21,7 @@ Help the user configure the rubber-band plugin. The plugin reads config from two
 }
 ```
 
-**Built-in rule IDs** (for `disabled`): `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`
+**Built-in rule IDs** (for `disabled`): `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`, `grep`, `trailing_cat`
 
 **Override semantics:** `blocked_extensions`, `allowed_prefixes`, and `allowed_suffixes` fully replace their defaults when present. `disabled` and `extra_habits` are additive across global and project configs.
 

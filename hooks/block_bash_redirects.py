@@ -9,8 +9,11 @@ Blocks and explains:
   - `tee <file>`                       → use Write tool
   - `2>&1 |`                           → use `|&`
   - `git add -A` / `git add .`        → stage specific files
+  - `grep <file>`                      → use Grep tool
+  - `cmd |& cat` / `cmd | cat`        → remove trailing cat
 
 Allows /dev/null, /dev/std*, /tmp/*, *.log, fd redirects (>&, >()).
+`cmd | grep` (stdin filter) is also allowed.
 
 Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
 (project-level). Both are merged. Supported keys:
@@ -21,7 +24,8 @@ Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
   "allowed_suffixes":    list of file suffixes to allow (replaces default)
 
 Built-in rule IDs:
-  pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect
+  pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect,
+  grep, trailing_cat
 """
 
 from __future__ import annotations
@@ -170,6 +174,16 @@ _BAD_HABITS: list[HabitEntry] = [
         id="git_add_all",
         pattern=re.compile(r"\bgit\s+add\s+(-A|--all|\.)(?:\s|$)"),
         reason="Stage specific files by name — avoids accidentally committing secrets or large binaries.",  # noqa: E501
+    ),
+    HabitEntry(
+        id="grep",
+        pattern=re.compile(r"(?:^|[;&]\s*)grep\b"),
+        reason="Use `Grep` tool instead of `grep` — results stay in context, supports recursive search. `cmd | grep` (stdin filter) is still fine.",  # noqa: E501
+    ),
+    HabitEntry(
+        id="trailing_cat",
+        pattern=re.compile(r"\|&?\s+cat\s*(?:$|;)"),
+        reason="Remove trailing `cat` — Bash tool captures all output directly.",
     ),
 ]
 
