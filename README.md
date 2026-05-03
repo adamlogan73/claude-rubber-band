@@ -1,8 +1,8 @@
 # claude-rubber-band
 
-Claude Code plugin — two hooks that keep Claude's shell habits tidy.
+Claude Code plugin — hook that keeps Claude's shell habits tidy.
 
-## Hooks
+## Hook
 
 ### `PreToolUse` — block bad Bash habits
 
@@ -21,7 +21,7 @@ Runs before every `Bash` tool call. Blocks patterns where a dedicated tool is be
 | `trailing_cat` | `cmd \| cat` / `cmd \|& cat` | Remove — Bash tool captures all output |
 | `redirect` | `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
 
-Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects, `cmd | grep` (stdin filter).
+Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects, `cmd | grep` (stdin filter), `tail -f` (follow mode).
 
 #### Custom rules
 
@@ -37,24 +37,28 @@ Add project-specific or personal rules via JSON config. Both files are loaded an
     {
       "pattern": "(?<!uv )pip[23]?\\s+install\\b|(?<!uv )python[23]?\\s+-m\\s+pip\\s+install\\b",
       "reason": "Use `uv add` instead of `pip install` — keeps deps in pyproject.toml."
-    },
-    {
-      "pattern": "\\bpython[23]?\\s+-c\\b",
-      "reason": "Write script to `.dev_scripts/` and run with `uv run`. Use `_tmp_<name>.py` prefix for throwaway scripts."
     }
   ]
 }
 ```
 
-`disabled`: suppress built-in rules by ID (see table above). IDs: `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`.
+`disabled` and `extra_habits` are **additive** — both global and project configs contribute to the merged set.
 
-`extra_habits`: each entry needs `pattern` (Python regex) and `reason` (message shown on block). No validator support — match = block.
+`blocked_extensions`, `allowed_prefixes`, and `allowed_suffixes` **replace** their defaults when set (last file wins).
 
-### `Stop` — clean up temp scripts
+#### Config keys
 
-Runs when the session ends. Deletes `_tmp_*.py` files from `.dev_scripts/` in the working directory.
+| Key | Type | Description |
+|---|---|---|
+| `disabled` | `string[]` | Built-in rule IDs to suppress |
+| `extra_habits` | `object[]` | Custom rules: `{id?, pattern, reason}` |
+| `blocked_extensions` | `string[]` | Extensions blocked by redirect rule (replaces defaults) |
+| `allowed_prefixes` | `string[]` | Path prefixes exempt from redirect rule (replaces defaults) |
+| `allowed_suffixes` | `string[]` | File suffixes exempt from redirect rule (replaces defaults) |
 
-Pairs with the convention of naming throwaway scripts `_tmp_<name>.py` — they're cleaned up automatically without manual housekeeping.
+Built-in rule IDs: `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`, `grep`, `trailing_cat`
+
+Default blocked extensions: `.py .pyi .md .rst .txt .json .jsonl .yaml .yml .toml .ini .cfg .conf .sh .bash .zsh .fish .js .ts .tsx .jsx .mjs .cjs .html .htm .css .scss .sass .go .rs .c .h .cpp .hpp .cc .java .kt .rb .php .sql .csv .tsv .xml .env .lock .dockerfile`
 
 ## Installation
 

@@ -2,10 +2,12 @@
 description: Create or update your rubber-band config (disabled rules, extra habits, extension/prefix/suffix overrides)
 ---
 
-Help the user configure the rubber-band plugin. The plugin reads config from two locations (both merged, project wins on conflicts):
+Help the user configure the rubber-band plugin. The plugin reads config from two locations (both merged):
 
 - **Global:** `~/.claude/rubber-band.json`
 - **Project:** `.claude/rubber-band.json` (relative to current working directory)
+
+`disabled` and `extra_habits` are **additive** across both files. `blocked_extensions`, `allowed_prefixes`, and `allowed_suffixes` **replace** their defaults (last file wins).
 
 ## Config schema
 
@@ -13,7 +15,7 @@ Help the user configure the rubber-band plugin. The plugin reads config from two
 {
   "disabled": ["rule_id", ...],
   "extra_habits": [
-    {"pattern": "<Python regex>", "reason": "<message shown on block>"}
+    {"id": "optional-id", "pattern": "<Python regex>", "reason": "<message shown on block>"}
   ],
   "blocked_extensions": [".py", ".sh", ...],
   "allowed_prefixes": ["/dev/", "/tmp/", ...],
@@ -22,8 +24,6 @@ Help the user configure the rubber-band plugin. The plugin reads config from two
 ```
 
 **Built-in rule IDs** (for `disabled`): `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`, `grep`, `trailing_cat`
-
-**Override semantics:** `blocked_extensions`, `allowed_prefixes`, and `allowed_suffixes` fully replace their defaults when present. `disabled` and `extra_habits` are additive across global and project configs.
 
 **Default blocked extensions:** `.py .pyi .md .rst .txt .json .jsonl .yaml .yml .toml .ini .cfg .conf .sh .bash .zsh .fish .js .ts .tsx .jsx .mjs .cjs .html .htm .css .scss .sass .go .rs .c .h .cpp .hpp .cc .java .kt .rb .php .sql .csv .tsv .xml .env .lock .dockerfile`
 

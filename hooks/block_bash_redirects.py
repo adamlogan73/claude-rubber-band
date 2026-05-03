@@ -13,12 +13,16 @@ Blocks and explains:
   - `cmd |& cat` / `cmd | cat`        → remove trailing cat
 
 Allows /dev/null, /dev/std*, /tmp/*, *.log, fd redirects (>&, >()).
-`cmd | grep` (stdin filter) is also allowed.
+`cmd | grep` (stdin filter) and `tail -f` (follow mode) are also allowed.
 
 Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
-(project-level). Both are merged. Supported keys:
+(project-level). Both are merged — disabled/extra_habits are additive across
+both files; blocked_extensions/allowed_prefixes/allowed_suffixes from the
+project file replace the global file's value (last write wins).
+
+Supported config keys:
   "disabled":            list of built-in rule IDs to suppress
-  "extra_habits":        list of {pattern, reason} objects to add
+  "extra_habits":        list of {id?, pattern, reason} objects to add
   "blocked_extensions":  list of extensions to block (replaces default)
   "allowed_prefixes":    list of path prefixes to allow (replaces default)
   "allowed_suffixes":    list of file suffixes to allow (replaces default)
@@ -30,13 +34,14 @@ Built-in rule IDs:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
+from typing import Any
 from typing import NamedTuple
 
 if TYPE_CHECKING:
@@ -96,6 +101,8 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset(
 ALLOWED_PREFIXES: tuple[str, ...] = ("/dev/", "/tmp/", "/var/tmp/", "/proc/")
 ALLOWED_SUFFIXES: tuple[str, ...] = (".log",)
 
+_REGEX_TIMEOUT: float = 0.5
+
 REDIRECT_RE = re.compile(r"(?<![>&\d])>{1,2}(?![>&(])\s*([^\s;|&)]+)")
 QUOTED_RE = re.compile(r"\"[^\"]*\"|'[^']*'")
 
@@ -105,6 +112,7 @@ class HabitEntry(NamedTuple):
     pattern: re.Pattern[str]
     reason: str
     validator: Callable[[re.Match[str]], bool] | None = None
+    trusted: bool = True
 
 
 class _RedirectCfg(NamedTuple):
@@ -126,14 +134,37 @@ def is_allowed_target(target: str, cfg: _RedirectCfg = _DEFAULT_REDIRECT_CFG) ->
     return Path(target).suffix.lower() not in cfg.blocked_extensions
 
 
+def _safe_search(
+    pattern: re.Pattern[str],
+    text: str,
+) -> re.Match[str] | None:
+    """Run pattern.search in a daemon thread; return None on timeout."""
+    result: list[re.Match[str] | None] = [None]
+
+    def _run() -> None:
+        result[0] = pattern.search(text)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=_REGEX_TIMEOUT)
+    return result[0]
+
+
 def _head_tail_has_file_arg(m: re.Match[str]) -> bool:
     tokens = m.group(2).split()
+    # -f / -F / --follow are follow-mode flags (tail -f), not file args
+    if any(t in {"-f", "-F", "--follow"} for t in tokens):
+        return False
     return any(not t.startswith("-") and not t.lstrip("+").isdigit() for t in tokens)
 
 
-# Uses module-default _RedirectCfg — config overrides do not affect the tee validator.
-def _tee_targets_blocked_file(m: re.Match[str]) -> bool:
-    return not is_allowed_target(target=m.group(1).rstrip(";|&)"))
+def _make_tee_validator(
+    cfg: _RedirectCfg,
+) -> Callable[[re.Match[str]], bool]:
+    def _validator(m: re.Match[str]) -> bool:
+        return not is_allowed_target(target=m.group(1).rstrip(";|&)"), cfg=cfg)
+
+    return _validator
 
 
 # validator(match) -> True means "block this match"
@@ -168,7 +199,7 @@ _BAD_HABITS: list[HabitEntry] = [
         id="tee",
         pattern=re.compile(r"\btee\s+(?:-\S+\s+)*(?!-)([^\s;|&)]+)"),
         reason="Use `Write` tool instead of `tee` — file writes stay explicit and reviewable.",  # noqa: E501
-        validator=_tee_targets_blocked_file,
+        # validator injected at runtime by _make_active_habits to respect user config
     ),
     HabitEntry(
         id="git_add_all",
@@ -186,6 +217,55 @@ _BAD_HABITS: list[HabitEntry] = [
         reason="Remove trailing `cat` — Bash tool captures all output directly.",
     ),
 ]
+
+_BUILTIN_IDS: frozenset[str] = frozenset(h.id for h in _BAD_HABITS) | {"redirect"}
+
+
+def _warn(msg: str) -> None:
+    print(f"rubber-band: {msg}", file=sys.stderr)
+
+
+def _parse_list_field(
+    data: dict[str, Any],
+    key: str,
+    source: str,
+) -> list[str] | None:
+    """Return validated list value for key, or None if absent/invalid."""
+    raw = data.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        _warn(f"{key} must be a list in {source} — using previous value")
+        return None
+    return [item for item in raw if isinstance(item, str)]
+
+
+def _parse_extra_habits(raw: list[Any], source: str) -> list[HabitEntry]:
+    habits: list[HabitEntry] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            _warn(f"extra_habits entry must be an object in {source} — skipping")
+            continue
+        pattern_str = entry.get("pattern", "")
+        reason = entry.get("reason", "")
+        habit_id = entry.get("id", "")
+        if not isinstance(pattern_str, str) or not isinstance(reason, str):
+            _warn(f"extra_habits: non-string pattern/reason in {source} — skipping")
+            continue
+        if pattern_str and reason:
+            try:
+                compiled = re.compile(pattern_str)
+                habits.append(
+                    HabitEntry(
+                        id=habit_id,
+                        pattern=compiled,
+                        reason=reason,
+                        trusted=False,
+                    ),
+                )
+            except re.error as exc:
+                _warn(f"invalid regex '{pattern_str}' in {source}: {exc}")
+    return habits
 
 
 def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
@@ -205,20 +285,41 @@ def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        disabled.update(data.get("disabled", []))
-        for entry in data.get("extra_habits", []):
-            pattern_str = entry.get("pattern", "")
-            reason = entry.get("reason", "")
-            if pattern_str and reason:
-                with contextlib.suppress(re.error):
-                    compiled = re.compile(pattern_str)
-                    extra.append(HabitEntry(id="", pattern=compiled, reason=reason))
-        if "blocked_extensions" in data:
-            blocked_extensions = frozenset(data["blocked_extensions"])
-        if "allowed_prefixes" in data:
-            allowed_prefixes = tuple(data["allowed_prefixes"])
-        if "allowed_suffixes" in data:
-            allowed_suffixes = tuple(data["allowed_suffixes"])
+
+        for rule_id in data.get("disabled", []):
+            disabled.add(rule_id)
+            if rule_id not in _BUILTIN_IDS:
+                _warn(f"unknown rule ID '{rule_id}' in disabled list ({path.name})")
+
+        raw_habits = data.get("extra_habits", [])
+        if not isinstance(raw_habits, list):
+            _warn(f"extra_habits must be a list in {path.name} — skipping")
+        else:
+            extra.extend(_parse_extra_habits(raw=raw_habits, source=path.name))
+
+        ext_list = _parse_list_field(
+            data=data,
+            key="blocked_extensions",
+            source=path.name,
+        )
+        if ext_list is not None:
+            blocked_extensions = frozenset(ext_list)
+
+        pfx_list = _parse_list_field(
+            data=data,
+            key="allowed_prefixes",
+            source=path.name,
+        )
+        if pfx_list is not None:
+            allowed_prefixes = tuple(pfx_list)
+
+        sfx_list = _parse_list_field(
+            data=data,
+            key="allowed_suffixes",
+            source=path.name,
+        )
+        if sfx_list is not None:
+            allowed_suffixes = tuple(sfx_list)
 
     return (
         extra,
@@ -229,6 +330,21 @@ def _load_config() -> tuple[list[HabitEntry], set[str], _RedirectCfg]:
             allowed_suffixes=allowed_suffixes,
         ),
     )
+
+
+def _make_active_habits(
+    disabled: set[str],
+    extra: list[HabitEntry],
+    redirect_cfg: _RedirectCfg,
+) -> list[HabitEntry]:
+    """Build the active habit list with config-aware tee validator."""
+    tee_validator = _make_tee_validator(cfg=redirect_cfg)
+    result: list[HabitEntry] = []
+    for h in _BAD_HABITS:
+        if h.id in disabled:
+            continue
+        result.append(h._replace(validator=tee_validator) if h.id == "tee" else h)
+    return result + extra
 
 
 def _find_blocked_redirect(command: str, cfg: _RedirectCfg) -> str | None:
@@ -248,9 +364,14 @@ def check_command(
     redirect_cfg: _RedirectCfg = _DEFAULT_REDIRECT_CFG,
 ) -> str | None:
     """Return block reason for command, or None if allowed."""
-    stripped = QUOTED_RE.sub("", command)
+    # "X" placeholder (not "") so quoted file args like cat "file.py" are still matched.
+    stripped = QUOTED_RE.sub("X", command)
     for habit in habits:
-        m = habit.pattern.search(stripped)
+        m = (
+            habit.pattern.search(stripped)
+            if habit.trusted
+            else _safe_search(habit.pattern, stripped)
+        )
         if m and (habit.validator is None or habit.validator(m)):
             return habit.reason
 
@@ -276,7 +397,11 @@ def main() -> int:
         return 0
 
     extra_habits, disabled, redirect_cfg = _load_config()
-    habits = [h for h in _BAD_HABITS if h.id not in disabled] + extra_habits
+    habits = _make_active_habits(
+        disabled=disabled,
+        extra=extra_habits,
+        redirect_cfg=redirect_cfg,
+    )
     reason = check_command(
         command=command,
         habits=habits,

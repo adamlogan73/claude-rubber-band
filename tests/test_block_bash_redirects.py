@@ -11,14 +11,20 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
 
 from block_bash_redirects import _BAD_HABITS
+from block_bash_redirects import _DEFAULT_REDIRECT_CFG
 from block_bash_redirects import HabitEntry
 from block_bash_redirects import _load_config
+from block_bash_redirects import _make_active_habits
 from block_bash_redirects import check_command
 from block_bash_redirects import is_allowed_target
 
 
 def habits() -> list[HabitEntry]:
-    return list(_BAD_HABITS)
+    return _make_active_habits(
+        disabled=set(),
+        extra=[],
+        redirect_cfg=_DEFAULT_REDIRECT_CFG,
+    )
 
 
 # --- is_allowed_target ---
@@ -73,6 +79,7 @@ def test_blocked_targets(target: str) -> None:
         ("echo foo 2>&1 | cat", "pipe_redirect"),
         ("cat file.py", "cat"),
         ("cat ./src/main.py", "cat"),
+        ('cat "file.py"', "cat"),  # quoted arg still blocked
         ("head file.py", "head_tail"),
         ("tail -n 10 file.py", "head_tail"),
         ("head -20 config.yaml", "head_tail"),
@@ -123,6 +130,9 @@ def test_blocks_redirects_to_source_files(command: str) -> None:
         "cat /dev/stdin",
         "cmd | head",  # head as pure stdin consumer
         "cmd | tail",
+        "tail -f /var/log/syslog",  # follow mode, not a file read
+        "tail -F service.log",
+        "tail --follow app.log",
         "echo foo > /dev/null",
         "echo foo > output.log",
         "echo foo > /tmp/scratch",
@@ -166,8 +176,12 @@ def test_disabled_suppresses_rule(
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
-    extra, disabled, _ = _load_config()
-    active = [h for h in _BAD_HABITS if h.id not in disabled] + extra
+    extra, disabled, redirect_cfg = _load_config()
+    active = _make_active_habits(
+        disabled=disabled,
+        extra=extra,
+        redirect_cfg=redirect_cfg,
+    )
     assert check_command(command="cat file.py", habits=active) is None
 
 
@@ -181,8 +195,12 @@ def test_disabled_does_not_affect_other_rules(
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
-    extra, disabled, _ = _load_config()
-    active = [h for h in _BAD_HABITS if h.id not in disabled] + extra
+    extra, disabled, redirect_cfg = _load_config()
+    active = _make_active_habits(
+        disabled=disabled,
+        extra=extra,
+        redirect_cfg=redirect_cfg,
+    )
     assert check_command(command="git add .", habits=active) is not None
 
 
@@ -205,9 +223,58 @@ def test_extra_habits_blocks_custom_pattern(
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
-    extra, disabled, _ = _load_config()
-    active = [h for h in _BAD_HABITS if h.id not in disabled] + extra
+    extra, disabled, redirect_cfg = _load_config()
+    active = _make_active_habits(
+        disabled=disabled,
+        extra=extra,
+        redirect_cfg=redirect_cfg,
+    )
     assert check_command(command="pip install requests", habits=active) == "Use uv add."
+
+
+def test_extra_habits_with_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / ".claude" / "rubber-band.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "extra_habits": [
+                    {"id": "no-pip", "pattern": r"\bpip\b", "reason": "Use uv add."},
+                ],
+            },
+        ),
+    )
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
+
+    extra, _, _ = _load_config()
+    assert len(extra) == 1
+    assert extra[0].id == "no-pip"
+    assert not extra[0].trusted
+
+
+def test_extra_habits_trusted_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / ".claude" / "rubber-band.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "extra_habits": [{"pattern": r"\bpip\b", "reason": "Use uv add."}],
+            },
+        ),
+    )
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
+
+    extra, _, _ = _load_config()
+    assert len(extra) == 1
+    assert not extra[0].trusted
 
 
 def test_extra_habits_invalid_regex_skipped(
@@ -248,8 +315,12 @@ def test_disabled_redirect_suppresses_redirect_check(
     monkeypatch.setenv("PWD", str(tmp_path))
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
 
-    extra, disabled, _ = _load_config()
-    active = [h for h in _BAD_HABITS if h.id not in disabled] + extra
+    extra, disabled, redirect_cfg = _load_config()
+    active = _make_active_habits(
+        disabled=disabled,
+        extra=extra,
+        redirect_cfg=redirect_cfg,
+    )
     result = check_command(
         command="echo foo > file.py",
         habits=active,
@@ -380,3 +451,58 @@ def test_override_removes_default_allowed_prefix(
         )
         is not None
     )
+
+
+# --- config validation ---
+
+
+def test_non_list_blocked_extensions_falls_back_to_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / ".claude" / "rubber-band.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"blocked_extensions": ".py"}))
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
+
+    _, _, redirect_cfg = _load_config()
+    # Fell back to default — .py is still blocked
+    assert redirect_cfg.blocked_extensions != frozenset({".py", "p", "."})
+    assert (
+        check_command(
+            command="echo x > file.py",
+            habits=habits(),
+            redirect_cfg=redirect_cfg,
+        )
+        is not None
+    )
+
+
+def test_non_string_items_in_blocked_extensions_filtered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / ".claude" / "rubber-band.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"blocked_extensions": [".lua", 42, None]}))
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
+
+    _, _, redirect_cfg = _load_config()
+    assert redirect_cfg.blocked_extensions == frozenset({".lua"})
+
+
+def test_unknown_disabled_id_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / ".claude" / "rubber-band.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"disabled": ["typo_rule_id"]}))
+    monkeypatch.setenv("PWD", str(tmp_path))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path / "no-home")
+
+    _load_config()
+    assert "typo_rule_id" in capsys.readouterr().err
