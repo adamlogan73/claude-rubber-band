@@ -183,13 +183,31 @@ def _load_config() -> tuple[list[HabitEntry], set[str]]:
     return extra, disabled
 
 
-def find_blocked_target(command: str) -> str | None:
-    """Redirect check: iterates all `>` matches, returns first blocked target."""
+def _find_blocked_redirect(command: str) -> str | None:
+    """Return first redirect target that should be blocked, or None."""
     stripped = QUOTED_RE.sub("", command)
     for match in REDIRECT_RE.finditer(stripped):
         target = match.group(1).rstrip(";|&)")
         if not is_allowed_target(target=target):
             return target
+    return None
+
+
+def check_command(command: str, habits: list[HabitEntry]) -> str | None:
+    """Return block reason for command, or None if allowed."""
+    stripped = QUOTED_RE.sub("", command)
+    for habit in habits:
+        m = habit.pattern.search(stripped)
+        if m and (habit.validator is None or habit.validator(m)):
+            return habit.reason
+
+    blocked = _find_blocked_redirect(command=command)
+    if blocked is not None:
+        return (
+            f"Redirect to '{blocked}' blocked. "
+            f"Use Write/Edit tool instead. "
+            f"For logs use *.log, /tmp/, or /dev/null."
+        )
     return None
 
 
@@ -205,24 +223,7 @@ def main() -> int:
 
     extra_habits, disabled = _load_config()
     habits = [h for h in _BAD_HABITS if h.id not in disabled] + extra_habits
-
-    stripped = QUOTED_RE.sub("", command)
-    reason: str | None = None
-
-    for habit in habits:
-        m = habit.pattern.search(stripped)
-        if m and (habit.validator is None or habit.validator(m)):
-            reason = habit.reason
-            break
-
-    if reason is None:
-        blocked = find_blocked_target(command=command)
-        if blocked is not None:
-            reason = (
-                f"Redirect to '{blocked}' blocked. "
-                f"Use Write/Edit tool instead. "
-                f"For logs use *.log, /tmp/, or /dev/null."
-            )
+    reason = check_command(command=command, habits=habits)
 
     if reason is None:
         return 0
