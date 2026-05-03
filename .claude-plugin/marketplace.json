@@ -1,0 +1,18 @@
+{
+  "name": "claude-rubber-band",
+  "metadata": {
+    "description": "Hooks that enforce tool-first shell habits and clean up temp scripts at session end."
+  },
+  "owner": {
+    "name": "Adam Logan",
+    "url": "https://github.com/adamlogan73"
+  },
+  "plugins": [
+    {
+      "name": "claude-rubber-band",
+      "description": "PreToolUse hook blocks bad shell habits. Stop hook deletes _tmp_*.py files.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

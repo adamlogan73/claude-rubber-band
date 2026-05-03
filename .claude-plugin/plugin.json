@@ -1,0 +1,33 @@
+{
+  "name": "claude-rubber-band",
+  "description": "Hooks that enforce tool-first shell habits and clean up temp files.",
+  "author": {
+    "name": "Adam Logan",
+    "url": "https://github.com/adamlogan73"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/block_bash_redirects.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/cleanup_tmp_scripts.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

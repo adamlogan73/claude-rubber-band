@@ -1,0 +1,6 @@
+.code-graph/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+.dev_scripts/_tmp_*.py
