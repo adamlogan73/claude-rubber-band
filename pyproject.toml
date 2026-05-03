@@ -24,13 +24,8 @@ exclude = [
 ]
 select = ['ALL']
 ignore = [
-    'E501',
     'D',
     'G004',
-    'ANN401',
-    'FBT',
-    'TD',
-    'FIX',
     'T201',   # print is intentional hook output
     'S108',   # /tmp/ paths are intentional allowlist entries
 ]
