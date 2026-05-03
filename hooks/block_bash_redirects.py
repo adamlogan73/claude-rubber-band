@@ -17,7 +17,7 @@ Config: ~/.claude/rubber-band.json (global) and/or .claude/rubber-band.json
   "disabled":     list of built-in rule IDs to suppress
   "extra_habits": list of {pattern, reason} objects to add
 
-Built-in rule IDs: pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all
+Built-in rule IDs: pipe_redirect, cat, head_tail, sed_i, awk_i, tee, git_add_all, redirect
 """
 
 from __future__ import annotations
@@ -27,7 +27,8 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
+from typing import NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,7 +84,7 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset(
     },
 )
 
-ALLOWED_PREFIXES: tuple[str, ...] = ("/dev/", "/tmp/", "/var/tmp/", "/proc/")  # noqa: S108
+ALLOWED_PREFIXES: tuple[str, ...] = ("/dev/", "/tmp/", "/var/tmp/", "/proc/")
 ALLOWED_SUFFIXES: tuple[str, ...] = (".log",)
 
 REDIRECT_RE = re.compile(r"(?<![>&\d])>{1,2}(?![>&(])\s*([^\s;|&)]+)")
@@ -177,7 +178,11 @@ def _load_config() -> tuple[list[HabitEntry], set[str]]:
             reason = entry.get("reason", "")
             if pattern_str and reason:
                 try:
-                    extra.append(HabitEntry(id="", pattern=re.compile(pattern_str), reason=reason))
+                    extra.append(
+                        HabitEntry(
+                            id="", pattern=re.compile(pattern_str), reason=reason,
+                        ),
+                    )
                 except re.error:
                     pass
     return extra, disabled
@@ -193,7 +198,11 @@ def _find_blocked_redirect(command: str) -> str | None:
     return None
 
 
-def check_command(command: str, habits: list[HabitEntry]) -> str | None:
+def check_command(
+    command: str,
+    habits: list[HabitEntry],
+    disabled: set[str] | None = None,
+) -> str | None:
     """Return block reason for command, or None if allowed."""
     stripped = QUOTED_RE.sub("", command)
     for habit in habits:
@@ -201,13 +210,14 @@ def check_command(command: str, habits: list[HabitEntry]) -> str | None:
         if m and (habit.validator is None or habit.validator(m)):
             return habit.reason
 
-    blocked = _find_blocked_redirect(command=command)
-    if blocked is not None:
-        return (
-            f"Redirect to '{blocked}' blocked. "
-            f"Use Write/Edit tool instead. "
-            f"For logs use *.log, /tmp/, or /dev/null."
-        )
+    if "redirect" not in (disabled or set()):
+        blocked = _find_blocked_redirect(command=command)
+        if blocked is not None:
+            return (
+                f"Redirect to '{blocked}' blocked. "
+                f"Use Write/Edit tool instead. "
+                f"For logs use *.log, /tmp/, or /dev/null."
+            )
     return None
 
 
@@ -223,12 +233,12 @@ def main() -> int:
 
     extra_habits, disabled = _load_config()
     habits = [h for h in _BAD_HABITS if h.id not in disabled] + extra_habits
-    reason = check_command(command=command, habits=habits)
+    reason = check_command(command=command, habits=habits, disabled=disabled)
 
     if reason is None:
         return 0
 
-    print(  # noqa: T201
+    print(
         json.dumps(
             {
                 "hookSpecificOutput": {

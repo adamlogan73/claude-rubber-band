@@ -17,7 +17,7 @@ Runs before every `Bash` tool call. Blocks patterns where a dedicated tool is be
 | `awk_i` | `awk -i` | `Edit` tool |
 | `tee` | `tee <file>` | `Write` tool |
 | `git_add_all` | `git add -A` / `git add .` | Stage specific files by name |
-| — | `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
+| `redirect` | `> file` / `>> file` (source/data files) | `Write` or `Edit` tool |
 
 Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects.
 
@@ -44,7 +44,7 @@ Add project-specific or personal rules via JSON config. Both files are loaded an
 }
 ```
 
-`disabled`: suppress built-in rules by ID (see table above).
+`disabled`: suppress built-in rules by ID (see table above). IDs: `pipe_redirect`, `cat`, `head_tail`, `sed_i`, `awk_i`, `tee`, `git_add_all`, `redirect`.
 
 `extra_habits`: each entry needs `pattern` (Python regex) and `reason` (message shown on block). No validator support — match = block.
 
