@@ -20,6 +20,30 @@ Runs before every `Bash` tool call. Blocks patterns where a dedicated tool is be
 
 Allows: `/dev/null`, `/dev/std*`, `/tmp/*`, `/proc/*`, `*.log`, fd redirects.
 
+#### Custom rules
+
+Add project-specific or personal rules via JSON config. Both files are loaded and merged if present:
+
+- **Global:** `~/.claude/rubber-band.json`
+- **Project:** `.claude/rubber-band.json`
+
+```json
+{
+  "extra_habits": [
+    {
+      "pattern": "(?<!uv )pip[23]?\\s+install\\b|(?<!uv )python[23]?\\s+-m\\s+pip\\s+install\\b",
+      "reason": "Use `uv add` instead of `pip install` — keeps deps in pyproject.toml."
+    },
+    {
+      "pattern": "\\bpython[23]?\\s+-c\\b",
+      "reason": "Write script to `.dev_scripts/` and run with `uv run`. Use `_tmp_<name>.py` prefix for throwaway scripts."
+    }
+  ]
+}
+```
+
+Each entry: `pattern` (Python regex) + `reason` (message shown on block). No validator support — match = block.
+
 ### `Stop` — clean up temp scripts
 
 Runs when the session ends. Deletes `_tmp_*.py` files from `.dev_scripts/` in the working directory.

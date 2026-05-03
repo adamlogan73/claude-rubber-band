@@ -11,11 +11,16 @@ Blocks and explains:
   - `git add -A` / `git add .`        → stage specific files
 
 Allows /dev/null, /dev/std*, /tmp/*, *.log, fd redirects (>&, >()).
+
+User-defined rules: add `extra_habits` entries to ~/.claude/rubber-band.json
+(global) and/or .claude/rubber-band.json (project-level). Each entry:
+  {"pattern": "<regex>", "reason": "<message shown on block>"}
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -144,6 +149,29 @@ _BAD_HABITS: list[_HabitEntry] = [
 ]
 
 
+def _load_extra_habits() -> list[_HabitEntry]:
+    """Load user-defined habits from global then project config, no validator."""
+    paths = [
+        Path.home() / ".claude" / "rubber-band.json",
+        Path(os.environ.get("PWD", ".")) / ".claude" / "rubber-band.json",
+    ]
+    habits: list[_HabitEntry] = []
+    for path in paths:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for entry in data.get("extra_habits", []):
+            pattern_str = entry.get("pattern", "")
+            reason = entry.get("reason", "")
+            if pattern_str and reason:
+                try:
+                    habits.append((re.compile(pattern_str), reason, None))
+                except re.error:
+                    pass
+    return habits
+
+
 def find_blocked_target(command: str) -> str | None:
     """Redirect check: iterates all `>` matches, returns first blocked target."""
     stripped = QUOTED_RE.sub("", command)
@@ -167,7 +195,7 @@ def main() -> int:
     stripped = QUOTED_RE.sub("", command)
     reason: str | None = None
 
-    for pattern, reason_str, validator in _BAD_HABITS:
+    for pattern, reason_str, validator in _BAD_HABITS + _load_extra_habits():
         m = pattern.search(stripped)
         if m and (validator is None or validator(m)):
             reason = reason_str
