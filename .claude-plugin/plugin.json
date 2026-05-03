@@ -1,6 +1,7 @@
 {
   "name": "claude-rubber-band",
-  "description": "Hooks that enforce tool-first shell habits and clean up temp files.",
+  "version": "1.0.0",
+  "description": "Hook that enforces tool-first shell habits.",
   "author": {
     "name": "Adam Logan",
     "url": "https://github.com/adamlogan73"
