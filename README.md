@@ -62,15 +62,11 @@ Default blocked extensions: `.py .pyi .md .rst .txt .json .jsonl .yaml .yml .tom
 
 ## Installation
 
-```sh
-claude plugin install https://github.com/adamlogan73/claude-rubber-band
-```
-
-Or clone and install locally:
+Add this repo as a marketplace, then install:
 
 ```sh
-git clone https://github.com/adamlogan73/claude-rubber-band
-claude plugin install ./claude-rubber-band
+/plugin marketplace add adamlogan73/claude-rubber-band
+/plugin install claude-rubber-band@claude-rubber-band
 ```
 
 ## License
